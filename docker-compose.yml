@@ -1,8 +1,21 @@
 version: "3.9"
 services:
+  mysql-local:
+    image: mysql:8.4
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   db-connector:
     build: .
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       - PORT=8080
+    depends_on:
+      mysql-local:
+        condition: service_healthy
