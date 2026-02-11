@@ -44,6 +44,7 @@ func main() {
 	port := getenv("PORT", "8080")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/connection/test", handleTestConnection)
 	mux.HandleFunc("/tables", handleListTables)
 	mux.HandleFunc("/describe", handleDescribeTable)
 	mux.HandleFunc("/sample", handleSampleRows)
@@ -84,6 +85,29 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func handleTestConnection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req baseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	conn, err := dbconnector.NewConnector(req.Connection)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	defer conn.Close()
+	if err := conn.TestConnection(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func handleListTables(w http.ResponseWriter, r *http.Request) {

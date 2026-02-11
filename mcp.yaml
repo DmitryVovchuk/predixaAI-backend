@@ -1,0 +1,7 @@
+adapters:
+  postgres:
+    type: http
+    endpoint: http://postgres-mcp:9001/rpc
+  mysql:
+    type: http
+    endpoint: http://mysql-mcp:9002/rpc

@@ -1,21 +1,111 @@
-version: "3.9"
 services:
-  mysql-local:
-    image: mysql:8.4
+  postgres:
+    image: postgres:16
     environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=mysql
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=rules
+    ports:
+      - "5432:5432"
+    networks:
+      - control_net
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
-  db-connector:
-    build: .
-    ports:
-      - "8085:8080"
+  mysql:
+    image: mysql:8.4
     environment:
-      - PORT=8080
+      - MYSQL_ROOT_PASSWORD=mysql
+      - MYSQL_DATABASE=app
+    ports:
+      - "3306:3306"
+    networks:
+      - data_net
+  nats:
+    image: nats:2.10
+    ports:
+      - "4222:4222"
+    networks:
+      - control_net
+  rule-service:
+    build:
+      context: ./services/rule-service
+    environment:
+      - PORT=8090
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/rules?sslmode=disable
+      - NATS_URL=nats://nats:4222
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
+      - RULE_POLL_MIN=5
+      - RULE_POLL_MAX=3600
+    ports:
+      - "8090:8090"
+    networks:
+      - control_net
     depends_on:
-      mysql-local:
+      postgres:
         condition: service_healthy
+      nats:
+        condition: service_started
+  scheduler-service:
+    build:
+      context: ./services/scheduler-service
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/rules?sslmode=disable
+      - NATS_URL=nats://nats:4222
+      - MCP_CONFIG_PATH=/app/mcp.yaml
+      - MCP_POSTGRES_HTTP=http://postgres-mcp:9001/rpc
+      - MCP_MYSQL_HTTP=http://mysql-mcp:9002/rpc
+      - ALLOWLIST_TABLES=telemetry,metrics
+      - WORKER_COUNT=4
+      - JOB_TIMEOUT_SECONDS=10
+      - ADMIN_PORT=8091
+    ports:
+      - "8091:8091"
+    networks:
+      - control_net
+      - data_net
+    volumes:
+      - ./mcp.yaml:/app/mcp.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+  postgres-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    environment:
+      - PORT=9001
+      - MCP_DB_TYPE=postgres
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/rules?sslmode=disable
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
+    ports:
+      - "9001:9001"
+    networks:
+      - data_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+  mysql-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    environment:
+      - PORT=9002
+      - MCP_DB_TYPE=mysql
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/rules?sslmode=disable
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
+    ports:
+      - "9002:9002"
+    networks:
+      - data_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  control_net:
+  data_net:
