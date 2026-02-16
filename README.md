@@ -26,10 +26,22 @@ Scheduler admin endpoints:
 - `POST /rules/{id}/disable`
 - `GET /rules/{id}/alerts`
 - `POST /alerts/{id}/treated`
+- `POST /machine-units`
+- `GET /machine-units`
+- `GET /machine-units/{unitId}`
+- `PUT /machine-units/{unitId}`
+- `DELETE /machine-units/{unitId}`
+- `POST /machine-units/{unitId}/rules`
+- `POST /machine-units/{unitId}/columns`
+- `PUT /machine-units/{unitId}/columns`
+- `PUT /machine-units/{unitId}/table`
+- `PUT /machine-units/{unitId}/connection`
 
-### Example rule prompt
+### Example rule prompts
 
-"table telemetry column temperature timestamp ts above 80 every 10s"
+- "table telemetry column temperature timestamp ts above 80 every 10s"
+- "table telemetry column temperature timestamp ts abnormal last 5m"
+- "table telemetry column temperature timestamp ts missing"
 
 ## Example requests
 
@@ -47,6 +59,66 @@ Validate rule:
 curl -X POST http://localhost:8090/rules/validate \
   -H 'Content-Type: application/json' \
   -d '{"rulePrompt":"table telemetry column temperature timestamp ts above 80 every 10s","connectionRef":"<uuid>"}'
+
+```
+
+Validate rule with draft hints (recommended for ambiguity):
+
+```
+curl -X POST http://localhost:8090/rules/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"rulePrompt":"abnormal","connectionRef":"<uuid>","draft":{"table":"telemetry","timestampColumn":"ts","parameters":[{"parameterName":"temperature","valueColumn":"temperature"}]}}'
+```
+
+Create rule with parameters array:
+
+```
+curl -X POST http://localhost:8090/rules \
+  -H 'Content-Type: application/json' \
+  -d '{"rulePrompt":"between 20 and 40","connectionRef":"<uuid>","draft":{"table":"telemetry","timestampColumn":"ts","parameters":[{"parameterName":"temperature","valueColumn":"temperature","detector":{"type":"threshold","threshold":{"op":"between","min":20,"max":40}}}]}}'
+```
+
+## Machine units
+
+Create machine unit:
+
+```
+curl -X POST http://localhost:8090/machine-units \
+  -H 'Content-Type: application/json' \
+  -d '{"unitName":"cnc","connectionRef":"<uuid>","selectedTable":"etchers_data","selectedColumns":["gas_ar_flow","rf_power"],"rule":["<rule-uuid>"]}'
+```
+
+Add/remove columns:
+
+```
+curl -X POST http://localhost:8090/machine-units/<unitId>/columns \
+  -H 'Content-Type: application/json' \
+  -d '{"add":["gas_ch3f_flow"],"remove":["gas_ar_flow"]}'
+```
+
+Replace columns:
+
+```
+curl -X PUT http://localhost:8090/machine-units/<unitId>/columns \
+  -H 'Content-Type: application/json' \
+  -d '{"selectedColumns":["gas_ch3f_flow","rf_power"]}'
+```
+
+Change table (clears columns by default):
+
+```
+curl -X PUT http://localhost:8090/machine-units/<unitId>/table \
+  -H 'Content-Type: application/json' \
+  -d '{"selectedTable":"etchers_data"}'
+```
+
+Add/remove rules:
+
+```
+curl -X POST http://localhost:8090/machine-units/<unitId>/rules \
+  -H 'Content-Type: application/json' \
+  -d '{"add":["<rule-uuid>"],"remove":["<rule-uuid>"]}'
+```
 ```
 
 ## Statuses

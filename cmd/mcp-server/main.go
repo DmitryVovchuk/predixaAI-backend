@@ -79,6 +79,16 @@ type AggregateRequest struct {
 	WindowSeconds   int        `json:"windowSeconds"`
 }
 
+type FetchRecentRowsRequest struct {
+	ConnectionRef   string     `json:"connectionRef"`
+	Table           string     `json:"table"`
+	Columns         []string   `json:"columns"`
+	TimestampColumn string     `json:"timestampColumn"`
+	Where           *WhereSpec `json:"where"`
+	Since           string     `json:"since"`
+	Limit           int        `json:"limit"`
+}
+
 type LatestValueResult struct {
 	Value any    `json:"value"`
 	TS    string `json:"ts"`
@@ -88,6 +98,10 @@ type AggregateResult struct {
 	Value   any    `json:"value"`
 	TSStart string `json:"ts_start"`
 	TSEnd   string `json:"ts_end"`
+}
+
+type FetchRecentRowsResult struct {
+	Rows []map[string]any `json:"rows"`
 }
 
 type Column struct {
@@ -215,6 +229,23 @@ func main() {
 				return
 			}
 			result, err := queryAggregate(ctx, cfg, mcpType, params)
+			if err != nil {
+				writeRPCError(w, req.ID, http.StatusInternalServerError, -32603, err.Error())
+				return
+			}
+			writeRPCResult(w, req.ID, result)
+		case "db.fetch_recent_rows":
+			var params FetchRecentRowsRequest
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ConnectionRef == "" {
+				writeRPCError(w, req.ID, http.StatusBadRequest, -32602, "invalid params")
+				return
+			}
+			cfg, err := store.getConnection(ctx, params.ConnectionRef, mcpType)
+			if err != nil {
+				writeRPCError(w, req.ID, http.StatusBadRequest, -32602, err.Error())
+				return
+			}
+			result, err := fetchRecentRows(ctx, cfg, mcpType, params)
 			if err != nil {
 				writeRPCError(w, req.ID, http.StatusInternalServerError, -32603, err.Error())
 				return
@@ -410,6 +441,102 @@ func queryAggregate(ctx context.Context, cfg dbconnector.ConnectionConfig, dbTyp
 		return AggregateResult{}, err
 	}
 	return AggregateResult{Value: normalizeValue(value), TSStart: fmt.Sprint(tsStart), TSEnd: fmt.Sprint(tsEnd)}, nil
+}
+
+func fetchRecentRows(ctx context.Context, cfg dbconnector.ConnectionConfig, dbType string, req FetchRecentRowsRequest) (FetchRecentRowsResult, error) {
+	if req.Since == "" {
+		return FetchRecentRowsResult{}, errors.New("since required")
+	}
+	if !isSafeIdentifier(req.Table) || !isSafeIdentifier(req.TimestampColumn) {
+		return FetchRecentRowsResult{}, errors.New("unsafe identifier")
+	}
+	if len(req.Columns) == 0 {
+		return FetchRecentRowsResult{}, errors.New("columns required")
+	}
+	limit := req.Limit
+	if limit <= 0 || limit > 2000 {
+		limit = 2000
+	}
+	parsedSince, err := time.Parse(time.RFC3339, req.Since)
+	if err != nil {
+		parsedSince, err = time.Parse(time.RFC3339Nano, req.Since)
+		if err != nil {
+			return FetchRecentRowsResult{}, errors.New("invalid since timestamp")
+		}
+	}
+
+	table, err := quoteIdent(dbType, req.Table)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	tsCol, err := quoteIdent(dbType, req.TimestampColumn)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	selectCols := make([]string, 0, len(req.Columns)+1)
+	colNames := make([]string, 0, len(req.Columns)+1)
+	seen := map[string]struct{}{}
+	for _, col := range req.Columns {
+		if !isSafeIdentifier(col) {
+			return FetchRecentRowsResult{}, errors.New("unsafe identifier")
+		}
+		if _, ok := seen[col]; ok {
+			continue
+		}
+		seen[col] = struct{}{}
+		quoted, err := quoteIdent(dbType, col)
+		if err != nil {
+			return FetchRecentRowsResult{}, err
+		}
+		selectCols = append(selectCols, quoted)
+		colNames = append(colNames, col)
+	}
+	if _, ok := seen[req.TimestampColumn]; !ok {
+		selectCols = append(selectCols, tsCol)
+		colNames = append(colNames, req.TimestampColumn)
+	}
+	whereSQL, args, _, err := buildWhereClause(dbType, req.Where, 2)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	timeClause := fmt.Sprintf("%s >= %s", tsCol, placeholder(dbType, 1))
+	clauses := []string{timeClause}
+	if whereSQL != "" {
+		clauses = append(clauses, "("+whereSQL+")")
+	}
+	where := "WHERE " + strings.Join(clauses, " AND ")
+	query := fmt.Sprintf("SELECT %s FROM %s %s ORDER BY %s DESC LIMIT %d", strings.Join(selectCols, ", "), table, where, tsCol, limit)
+
+	db, err := openTargetDB(ctx, cfg)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	defer db.Close()
+
+	args = append([]any{parsedSince}, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	defer rows.Close()
+
+	results := []map[string]any{}
+	for rows.Next() {
+		values := make([]any, len(colNames))
+		ptrs := make([]any, len(colNames))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return FetchRecentRowsResult{}, err
+		}
+		row := map[string]any{}
+		for i, name := range colNames {
+			row[name] = normalizeValue(values[i])
+		}
+		results = append(results, row)
+	}
+	return FetchRecentRowsResult{Rows: results}, nil
 }
 
 func buildWhereClause(dbType string, where *WhereSpec, startIndex int) (string, []any, int, error) {

@@ -68,3 +68,15 @@ func (a *PostgresAdapter) QueryAggregate(ctx context.Context, req AggregateReque
 	}
 	return result, nil
 }
+
+func (a *PostgresAdapter) FetchRecentRows(ctx context.Context, req FetchRecentRowsRequest) (FetchRecentRowsResult, error) {
+	resp, err := a.Transport.Call(ctx, "db.fetch_recent_rows", req)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	var result FetchRecentRowsResult
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	return result, nil
+}

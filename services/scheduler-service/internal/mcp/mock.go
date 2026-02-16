@@ -7,6 +7,7 @@ type MockAdapter struct {
 	Columns      map[string][]Column
 	LatestResult LatestValueResult
 	AggResult    AggregateResult
+	RecentRows   FetchRecentRowsResult
 	Err          error
 }
 
@@ -31,4 +32,8 @@ func (m *MockAdapter) QueryLatestValue(ctx context.Context, req LatestValueReque
 
 func (m *MockAdapter) QueryAggregate(ctx context.Context, req AggregateRequest) (AggregateResult, error) {
 	return m.AggResult, m.Err
+}
+
+func (m *MockAdapter) FetchRecentRows(ctx context.Context, req FetchRecentRowsRequest) (FetchRecentRowsResult, error) {
+	return m.RecentRows, m.Err
 }

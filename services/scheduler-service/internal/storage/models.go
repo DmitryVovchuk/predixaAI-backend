@@ -13,12 +13,17 @@ type RuleRecord struct {
 }
 
 type AlertRecord struct {
-	RuleID        string
-	TSUTC         time.Time
-	ParameterName string
-	ObservedValue string
-	LimitExpr     string
-	Hit           bool
-	Treated       bool
-	Metadata      []byte
+	RuleID         string
+	TSUTC          time.Time
+	ParameterName  string
+	ObservedValue  string
+	LimitExpr      string
+	DetectorType   string
+	Severity       string
+	AnomalyScore   *float64
+	BaselineMedian *float64
+	BaselineMAD    *float64
+	Hit            bool
+	Treated        bool
+	Metadata       []byte
 }

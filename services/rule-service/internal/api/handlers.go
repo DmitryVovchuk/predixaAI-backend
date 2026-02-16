@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,12 +17,12 @@ import (
 )
 
 type Handler struct {
-	Repo       *storage.Repository
-	Bus        *bus.Publisher
-	Encryptor  crypto.Encryptor
-	MinPoll    int
-	MaxPoll    int
-	Timeout    time.Duration
+	Repo      *storage.Repository
+	Bus       *bus.Publisher
+	Encryptor crypto.Encryptor
+	MinPoll   int
+	MaxPoll   int
+	Timeout   time.Duration
 }
 
 type errorResponse struct {
@@ -42,21 +43,68 @@ type connectionRequest struct {
 }
 
 type rulePromptRequest struct {
-	RulePrompt    string `json:"rulePrompt"`
-	ConnectionRef string `json:"connectionRef"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
+	RulePrompt    string                `json:"rulePrompt"`
+	ConnectionRef string                `json:"connectionRef"`
+	Name          string                `json:"name"`
+	Description   string                `json:"description"`
+	Enabled       *bool                 `json:"enabled"`
+	TableName     string                `json:"tableName"`
+	ColumnName    string                `json:"columnName"`
+	Timestamp     string                `json:"timestamp"`
+	Parameters    []rules.ParameterSpec `json:"parameters"`
+	Draft         *rules.RuleDraft      `json:"draft"`
 }
 
 type ruleUpdateRequest struct {
-	RulePrompt  string       `json:"rulePrompt"`
-	Rule        *rules.RuleSpec `json:"rule"`
-	Enabled     *bool        `json:"enabled"`
+	RulePrompt string                `json:"rulePrompt"`
+	Rule       *rules.RuleSpec       `json:"rule"`
+	Enabled    *bool                 `json:"enabled"`
+	TableName  string                `json:"tableName"`
+	ColumnName string                `json:"columnName"`
+	Timestamp  string                `json:"timestamp"`
+	Parameters []rules.ParameterSpec `json:"parameters"`
+	Draft      *rules.RuleDraft      `json:"draft"`
+}
+
+func buildRulePrompt(prompt string, tableName string, columnName string, timestamp string) string {
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(tableName) != "" {
+		parts = append(parts, "table "+strings.TrimSpace(tableName))
+	}
+	if strings.TrimSpace(columnName) != "" {
+		parts = append(parts, "column "+strings.TrimSpace(columnName))
+	}
+	if strings.TrimSpace(timestamp) != "" {
+		parts = append(parts, "timestamp "+strings.TrimSpace(timestamp))
+	}
+	if strings.TrimSpace(prompt) != "" {
+		parts = append(parts, strings.TrimSpace(prompt))
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func buildDraft(req rulePromptRequest) *rules.RuleDraft {
+	if req.Draft != nil {
+		return req.Draft
+	}
+	if strings.TrimSpace(req.TableName) == "" && strings.TrimSpace(req.Timestamp) == "" && len(req.Parameters) == 0 && strings.TrimSpace(req.ColumnName) == "" {
+		return nil
+	}
+	params := req.Parameters
+	if len(params) == 0 && strings.TrimSpace(req.ColumnName) != "" {
+		params = []rules.ParameterSpec{{ParameterName: strings.TrimSpace(req.ColumnName), ValueColumn: strings.TrimSpace(req.ColumnName)}}
+	}
+	return &rules.RuleDraft{
+		Table:           strings.TrimSpace(req.TableName),
+		TimestampColumn: strings.TrimSpace(req.Timestamp),
+		Parameters:      params,
+	}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/connections", h.handleConnections)
 	r.Post("/rules/validate", h.handleRulesValidate)
+	h.RegisterMachineUnitRoutes(r)
 	r.Route("/rules", func(r chi.Router) {
 		r.Post("/", h.handleRulesCreate)
 		r.Get("/", h.handleRulesList)
@@ -112,7 +160,8 @@ func (h *Handler) handleRulesValidate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	spec, parseErr := rules.ParsePrompt(req.RulePrompt, req.ConnectionRef)
+	draft := buildDraft(req)
+	spec, parseErr := rules.ParsePromptWithDraft(req.RulePrompt, req.ConnectionRef, draft)
 	if parseErr != nil {
 		writeRuleError(w, parseErr)
 		return
@@ -122,6 +171,9 @@ func (h *Handler) handleRulesValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != "" {
 		spec.Description = req.Description
+	}
+	if req.Enabled != nil {
+		spec.Enabled = *req.Enabled
 	}
 	if spec.Name == "" {
 		spec.Name = spec.ParameterName
@@ -139,7 +191,8 @@ func (h *Handler) handleRulesCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	spec, parseErr := rules.ParsePrompt(req.RulePrompt, req.ConnectionRef)
+	draft := buildDraft(req)
+	spec, parseErr := rules.ParsePromptWithDraft(req.RulePrompt, req.ConnectionRef, draft)
 	if parseErr != nil {
 		writeRuleError(w, parseErr)
 		return
@@ -149,6 +202,9 @@ func (h *Handler) handleRulesCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != "" {
 		spec.Description = req.Description
+	}
+	if req.Enabled != nil {
+		spec.Enabled = *req.Enabled
 	}
 	if spec.Name == "" {
 		spec.Name = spec.ParameterName
@@ -161,14 +217,14 @@ func (h *Handler) handleRulesCreate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.Timeout)
 	defer cancel()
 	id, err := h.Repo.CreateRule(ctx, storage.RuleRecord{
-		Name:          spec.Name,
-		Description:   spec.Description,
-		ConnectionRef: spec.ConnectionRef,
-		ParameterName: spec.ParameterName,
-		RuleJSON:      ruleJSON,
-		Enabled:       spec.Enabled,
-		Status:        "DRAFT",
-		LastError:     nil,
+		Name:            spec.Name,
+		Description:     spec.Description,
+		ConnectionRef:   spec.ConnectionRef,
+		ParameterName:   spec.ParameterName,
+		RuleJSON:        ruleJSON,
+		Enabled:         spec.Enabled,
+		Status:          "DRAFT",
+		LastError:       nil,
 		LastValidatedAt: nil,
 	})
 	if err != nil {
@@ -218,8 +274,16 @@ func (h *Handler) handleRuleUpdateByID(w http.ResponseWriter, r *http.Request) {
 	var spec rules.RuleSpec
 	if req.Rule != nil {
 		spec = *req.Rule
-	} else if req.RulePrompt != "" {
-		parsed, parseErr := rules.ParsePrompt(req.RulePrompt, rec.ConnectionRef)
+	} else if req.RulePrompt != "" || req.TableName != "" || req.ColumnName != "" || req.Timestamp != "" || len(req.Parameters) > 0 || req.Draft != nil {
+		draft := buildDraft(rulePromptRequest{
+			RulePrompt: req.RulePrompt,
+			TableName:  req.TableName,
+			ColumnName: req.ColumnName,
+			Timestamp:  req.Timestamp,
+			Parameters: req.Parameters,
+			Draft:      req.Draft,
+		})
+		parsed, parseErr := rules.ParsePromptWithDraft(req.RulePrompt, rec.ConnectionRef, draft)
 		if parseErr != nil {
 			writeRuleError(w, parseErr)
 			return

@@ -1,6 +1,9 @@
 package storage
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type DBConnection struct {
 	ID        string
@@ -36,7 +39,26 @@ type AlertRecord struct {
 	ParameterName  string
 	ObservedValue  string
 	LimitExpr      string
+	DetectorType   string
+	Severity       string
+	AnomalyScore   *float64
+	BaselineMedian *float64
+	BaselineMAD    *float64
 	Hit            bool
 	Treated        bool
 	Metadata       []byte
+}
+
+type MachineUnit struct {
+	UnitID          string
+	UnitName        string
+	ConnectionRef   string
+	SelectedTable   string
+	SelectedColumns []string
+	LiveParameters  json.RawMessage
+	RuleIDs         []string
+	PosX            float64
+	PosY            float64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }

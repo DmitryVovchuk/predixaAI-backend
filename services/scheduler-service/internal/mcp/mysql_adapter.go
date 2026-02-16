@@ -70,6 +70,18 @@ func (a *MySQLAdapter) QueryAggregate(ctx context.Context, req AggregateRequest)
 	return result, nil
 }
 
+func (a *MySQLAdapter) FetchRecentRows(ctx context.Context, req FetchRecentRowsRequest) (FetchRecentRowsResult, error) {
+	resp, err := a.Transport.Call(ctx, "db.fetch_recent_rows", req)
+	if err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	var result FetchRecentRowsResult
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return FetchRecentRowsResult{}, err
+	}
+	return result, nil
+}
+
 type Transport interface {
 	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
 }
