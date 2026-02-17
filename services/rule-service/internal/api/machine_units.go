@@ -30,7 +30,7 @@ type machineUnitRequest struct {
 	SelectedTable   string          `json:"selectedTable"`
 	SelectedColumns []string        `json:"selectedColumns"`
 	LiveParameters  json.RawMessage `json:"liveParameters"`
-	RuleIDs         []string        `json:"rule"`
+	RuleIDs         ruleIDList      `json:"rule"`
 	Pos             *positionInput  `json:"pos"`
 }
 
@@ -76,6 +76,26 @@ type updatePositionRequest struct {
 type positionInput struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
+}
+
+type ruleIDList []string
+
+func (r *ruleIDList) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*r = []string{}
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		*r = []string{}
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	*r = values
+	return nil
 }
 
 func (h *Handler) RegisterMachineUnitRoutes(r chi.Router) {
@@ -440,7 +460,7 @@ func (h *Handler) validateMachineUnitRequest(ctx context.Context, req machineUni
 	} else {
 		details = append(details, validateIdentifierList("selectedColumns", columns)...)
 	}
-	ruleIDs := dedupePreserveOrder(req.RuleIDs)
+	ruleIDs := dedupePreserveOrder([]string(req.RuleIDs))
 	if len(ruleIDs) > maxRuleIDs {
 		details = append(details, rules.ErrorDetail{Field: "rule", Problem: "max", Hint: "Maximum 500 rules"})
 	} else {

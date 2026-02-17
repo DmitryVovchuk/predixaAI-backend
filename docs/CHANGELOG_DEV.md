@@ -7,6 +7,8 @@
 - **How to test**: `go test ./...`
 - **Migrations**: none
 
+- **rule-service**: machine-units `rule` payload accepts an empty object `{}` and treats it as an empty list (backward-compatible).
+
 ### Example payloads
 
 ```json

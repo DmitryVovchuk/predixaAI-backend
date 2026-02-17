@@ -264,6 +264,40 @@ func TestMachineUnitColumnsLimit(t *testing.T) {
 	}
 }
 
+func TestMachineUnitCreateRuleObject(t *testing.T) {
+	fixture := setupMachineUnitFixture(t)
+	defer fixture.cleanup()
+	router := buildTestRouter(fixture.repo)
+
+	payload := map[string]any{
+		"unitName":        "cnc",
+		"connectionRef":   fixture.connectionRef,
+		"selectedTable":   "etchers_data",
+		"selectedColumns": []string{"gas_ar_flow"},
+		"rule":            map[string]any{},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/machine-units", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var parsed struct {
+		Ok   bool                `json:"ok"`
+		Unit machineUnitResponse `json:"unit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(parsed.Unit.RuleIDs) != 0 {
+		t.Fatalf("expected rule list to be empty")
+	}
+}
+
 func TestMachineUnitPositionSuccess(t *testing.T) {
 	fixture := setupMachineUnitFixture(t)
 	defer fixture.cleanup()
