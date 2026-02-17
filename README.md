@@ -26,6 +26,32 @@ Scheduler admin endpoints:
 - `POST /rules/{id}/disable`
 - `GET /rules/{id}/alerts`
 - `POST /alerts/{id}/treated`
+
+## API (db-connector)
+
+- `POST /connection/test`
+- `POST /tables`
+- `POST /describe`
+- `POST /sample`
+- `POST /profile`
+
+### Strict connectionRef requests
+
+List tables (connectionRef required):
+
+```
+curl -X POST http://localhost:8085/tables \
+  -H 'Content-Type: application/json' \
+  -d '{"connectionRef":"<uuid>","schema":"app"}'
+```
+
+Describe table (connectionRef required):
+
+```
+curl -X POST http://localhost:8085/describe \
+  -H 'Content-Type: application/json' \
+  -d '{"connectionRef":"<uuid>","table":"users"}'
+```
 - `POST /machine-units`
 - `GET /machine-units`
 - `GET /machine-units/{unitId}`
