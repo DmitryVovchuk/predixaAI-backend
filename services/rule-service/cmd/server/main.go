@@ -26,6 +26,8 @@ func main() {
 	natsURL := getenv("NATS_URL", "nats://localhost:4222")
 	minPoll := getenvInt("RULE_POLL_MIN", 5)
 	maxPoll := getenvInt("RULE_POLL_MAX", 3600)
+	dbConnectorURL := getenv("DB_CONNECTOR_URL", "http://localhost:8085")
+	schedulerURL := getenv("SCHEDULER_ADMIN_URL", "http://localhost:8091")
 	key := getenv("ENCRYPTION_KEY", "")
 	if len(key) != 32 {
 		logger.Error("ENCRYPTION_KEY must be 32 bytes")
@@ -58,6 +60,8 @@ func main() {
 		MinPoll:   minPoll,
 		MaxPoll:   maxPoll,
 		Timeout:   5 * time.Second,
+		DBConnectorURL: dbConnectorURL,
+		SchedulerURL:   schedulerURL,
 	}
 
 	r := chi.NewRouter()

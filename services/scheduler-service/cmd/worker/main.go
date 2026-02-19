@@ -115,6 +115,7 @@ func startAdminServer(port string, repo *storage.Repository, reg *scheduler.Regi
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
+	registerStepperHandlers(mux, repo, registry, allowlist, limits)
 
 	server := &http.Server{
 		Addr:              ":" + port,

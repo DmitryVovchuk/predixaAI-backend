@@ -37,6 +37,11 @@ type DetectorSpec struct {
 	Threshold   *ThresholdSpec   `json:"threshold,omitempty"`
 	RobustZ     *RobustZSpec     `json:"robustZ,omitempty"`
 	MissingData *MissingDataSpec `json:"missingData,omitempty"`
+	SpecLimit   *SpecLimitSpec   `json:"specLimit,omitempty"`
+	Shewhart    *ShewhartSpec    `json:"shewhart,omitempty"`
+	RangeChart  *RangeChartSpec  `json:"rangeChart,omitempty"`
+	Trend       *TrendSpec       `json:"trend,omitempty"`
+	TPA         *TPASpec         `json:"tpa,omitempty"`
 }
 
 type ThresholdSpec struct {
@@ -56,6 +61,68 @@ type RobustZSpec struct {
 
 type MissingDataSpec struct {
 	MaxGapSeconds int `json:"maxGapSeconds"`
+}
+
+type SpecLimitSpec struct {
+	SpecLimits    *SpecLimitBounds    `json:"specLimits,omitempty"`
+	ControlLimits *ControlLimitBounds `json:"controlLimits,omitempty"`
+	Mode          string              `json:"mode"`
+	Epsilon       *float64            `json:"epsilon,omitempty"`
+}
+
+type SpecLimitBounds struct {
+	USL *float64 `json:"usl,omitempty"`
+	LSL *float64 `json:"lsl,omitempty"`
+}
+
+type ControlLimitBounds struct {
+	UCL *float64 `json:"ucl,omitempty"`
+	LCL *float64 `json:"lcl,omitempty"`
+}
+
+type ShewhartSpec struct {
+	Baseline         BaselineSpec `json:"baseline"`
+	SigmaMultiplier float64     `json:"sigmaMultiplier"`
+	MinBaselineN    int         `json:"minBaselineN"`
+	PopulationSigma bool        `json:"populationSigma"`
+}
+
+type BaselineSpec struct {
+	LastN     *int           `json:"lastN,omitempty"`
+	TimeRange *TimeRangeSpec `json:"timeRange,omitempty"`
+}
+
+type TimeRangeSpec struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+type RangeChartSpec struct {
+	SubgroupSize         int            `json:"subgroupSize"`
+	Subgrouping          SubgroupingSpec `json:"subgrouping"`
+	Baseline             BaselineSpec   `json:"baseline"`
+	MinBaselineSubgroups int            `json:"minBaselineSubgroups"`
+}
+
+type SubgroupingSpec struct {
+	Mode   string `json:"mode"`
+	Column string `json:"column,omitempty"`
+}
+
+type TrendSpec struct {
+	WindowSize                  int     `json:"windowSize"`
+	Epsilon                     float64 `json:"epsilon"`
+	RequireConsecutiveTimestamps bool    `json:"requireConsecutiveTimestamps"`
+}
+
+type TPASpec struct {
+	WindowN              int              `json:"windowN"`
+	RegressionTimeBasis  string           `json:"regressionTimeBasis"`
+	SlopeThreshold       *float64         `json:"slopeThreshold,omitempty"`
+	TimeToSpecThreshold  *float64         `json:"timeToSpecThreshold,omitempty"`
+	RequireSpecLimits    bool             `json:"requireSpecLimits"`
+	SpecLimits           *SpecLimitBounds `json:"specLimits,omitempty"`
+	Epsilon              float64          `json:"epsilon"`
 }
 
 type RuleDraft struct {

@@ -103,6 +103,46 @@ func RuntimeValidateRule(ctx context.Context, adapter mcp.DbMcpAdapter, spec sch
 			}
 			continue
 		}
+		if param.Detector.Type == "range_chart" {
+			if param.Detector.RangeChart == nil {
+				return errors.New("range_chart config missing")
+			}
+			if !isSupportedRangeChartSize(param.Detector.RangeChart.SubgroupSize) {
+				return errors.New("unsupported subgroup size")
+			}
+			if !isNumericType(colTypes[param.ValueColumn]) {
+				return errors.New("non-numeric column for range_chart")
+			}
+			mode := param.Detector.RangeChart.Subgrouping.Mode
+			if mode == "column" {
+				if param.Detector.RangeChart.Subgrouping.Column == "" {
+					return errors.New("subgrouping column required")
+				}
+				if _, ok := colSet[param.Detector.RangeChart.Subgrouping.Column]; !ok {
+					return errors.New("subgrouping column not found")
+				}
+			}
+			queryCtx, cancelQuery := context.WithTimeout(ctx, limits.MaxQueryDuration)
+			_, err = adapter.FetchRecentRows(queryCtx, mcp.FetchRecentRowsRequest{
+				ConnectionRef:   spec.ConnectionRef,
+				Table:           spec.Source.Table,
+				Columns:         []string{param.ValueColumn, spec.Source.TimestampColumn},
+				TimestampColumn: spec.Source.TimestampColumn,
+				Where:           toWhere(spec.Source.Where),
+				Since:           time.Now().Add(-time.Duration(limits.MaxWindowSeconds) * time.Second).Format(time.RFC3339),
+				Limit:           limits.MaxSampleRows,
+			})
+			cancelQuery()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if param.Detector.Type == "shewhart" || param.Detector.Type == "trend" || param.Detector.Type == "tpa" || param.Detector.Type == "spec_limit" {
+			if !isNumericType(colTypes[param.ValueColumn]) {
+				return errors.New("non-numeric column for detector")
+			}
+		}
 		if param.Detector.Type == "threshold" && spec.Aggregation != "" && spec.Aggregation != "latest" && spec.WindowSeconds != nil {
 			queryCtx, cancelQuery := context.WithTimeout(ctx, limits.MaxQueryDuration)
 			_, err = adapter.QueryAggregate(queryCtx, mcp.AggregateRequest{
@@ -172,4 +212,13 @@ func normalizeParameters(spec scheduler.RuleSpec) []scheduler.ParameterSpec {
 func isNumericType(colType string) bool {
 	value := strings.ToLower(colType)
 	return strings.Contains(value, "int") || strings.Contains(value, "decimal") || strings.Contains(value, "numeric") || strings.Contains(value, "float") || strings.Contains(value, "double") || strings.Contains(value, "real")
+}
+
+func isSupportedRangeChartSize(size int) bool {
+	switch size {
+	case 2, 3, 4, 5, 6, 7, 8, 9, 10:
+		return true
+	default:
+		return false
+	}
 }

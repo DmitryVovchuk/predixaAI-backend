@@ -27,6 +27,50 @@ Scheduler admin endpoints:
 - `GET /rules/{id}/alerts`
 - `POST /alerts/{id}/treated`
 
+### Rule Creation Stepper API
+
+Endpoints:
+- `GET /api/rules/catalog`
+- `GET /api/machine-units/{unitId}/parameters`
+- `POST /api/rules/baseline/check`
+- `POST /api/rules/preview`
+- `POST /api/rules`
+- `PUT /api/rules/{ruleId}`
+- `GET /api/rules?unitId=...`
+- `DELETE /api/rules/{ruleId}`
+- `POST /api/rules/{ruleId}/enable`
+- `POST /api/rules/{ruleId}/disable`
+- `GET /api/machine-units/{unitId}/rule-health`
+
+Stepper flow (recommended):
+1) Load catalog -> `GET /api/rules/catalog`
+2) Load machine unit parameters -> `GET /api/machine-units/{unitId}/parameters`
+3) Baseline readiness -> `POST /api/rules/baseline/check`
+4) Preview -> `POST /api/rules/preview`
+5) Save -> `POST /api/rules`
+
+Catalog example:
+
+```
+curl -X GET http://localhost:8090/api/rules/catalog
+```
+
+Baseline check example:
+
+```
+curl -X POST http://localhost:8090/api/rules/baseline/check \
+  -H 'Content-Type: application/json' \
+  -d '{"unitId":"machine-uuid","parameterId":"telemetry.temperature","ruleType":"SHEWHART_3SIGMA","connectionRef":"<uuid>","baselineSelector":{"kind":"lastN","value":200}}'
+```
+
+Preview example:
+
+```
+curl -X POST http://localhost:8090/api/rules/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"unitId":"machine-uuid","parameterId":"telemetry.temperature","ruleType":"SPEC_LIMIT_VIOLATION","connectionRef":"<uuid>","config":{"mode":"spec","specLimits":{"usl":100}}}'
+```
+
 ## API (db-connector)
 
 - `POST /connection/test`
@@ -104,6 +148,97 @@ curl -X POST http://localhost:8090/rules \
   -d '{"rulePrompt":"between 20 and 40","connectionRef":"<uuid>","draft":{"table":"telemetry","timestampColumn":"ts","parameters":[{"parameterName":"temperature","valueColumn":"temperature","detector":{"type":"threshold","threshold":{"op":"between","min":20,"max":40}}}]}}'
 ```
 
+### Phase 1 detector examples
+
+Notes:
+- Trend continuity uses timestamps: strictly increasing with gaps no larger than 2x the median interval (equal timestamps are invalid).
+- TPA regression defaults to timestamp basis unless `regressionTimeBasis` is set to `index`.
+- Range chart `subgroupSize` supports 2–10 (D3/D4 constants).
+
+Spec limits:
+
+```json
+{
+  "parameterName": "temperature",
+  "valueColumn": "temperature",
+  "detector": {
+    "type": "spec_limit",
+    "specLimit": {
+      "mode": "spec",
+      "specLimits": {"usl": 100, "lsl": 10}
+    }
+  }
+}
+```
+
+Shewhart (3σ):
+
+```json
+{
+  "parameterName": "temperature",
+  "valueColumn": "temperature",
+  "detector": {
+    "type": "shewhart",
+    "shewhart": {
+      "baseline": {"lastN": 50},
+      "sigmaMultiplier": 3,
+      "minBaselineN": 20
+    }
+  }
+}
+```
+
+Range chart (R):
+
+```json
+{
+  "parameterName": "temperature",
+  "valueColumn": "temperature",
+  "detector": {
+    "type": "range_chart",
+    "rangeChart": {
+      "subgroupSize": 2,
+      "subgrouping": {"mode": "consecutive"},
+      "baseline": {"lastN": 50},
+      "minBaselineSubgroups": 5
+    }
+  }
+}
+```
+
+Trend (6-point):
+
+```json
+{
+  "parameterName": "temperature",
+  "valueColumn": "temperature",
+  "detector": {
+    "type": "trend",
+    "trend": {
+      "windowSize": 6,
+      "epsilon": 0
+    }
+  }
+}
+```
+
+TPA (slope):
+
+```json
+{
+  "parameterName": "temperature",
+  "valueColumn": "temperature",
+  "detector": {
+    "type": "tpa",
+    "tpa": {
+      "windowN": 5,
+      "regressionTimeBasis": "index",
+      "slopeThreshold": 0.5
+    }
+  }
+}
+```
+
 ## Machine units
 
 Create machine unit:
@@ -111,7 +246,15 @@ Create machine unit:
 ```
 curl -X POST http://localhost:8090/machine-units \
   -H 'Content-Type: application/json' \
-  -d '{"unitName":"cnc","connectionRef":"<uuid>","selectedTable":"etchers_data","selectedColumns":["gas_ar_flow","rf_power"],"rule":["<rule-uuid>"]}'
+  -d '{"unitName":"cnc","connectionRef":"<uuid>","selectedTable":"etchers_data","timestampColumn":"ts","selectedColumns":["gas_ar_flow","rf_power"],"rule":["<rule-uuid>"]}'
+```
+
+Update existing machine unit via POST (when unitId exists):
+
+```
+curl -X POST http://localhost:8090/machine-units \
+  -H 'Content-Type: application/json' \
+  -d '{"unitId":"machine-<uuid>","unitName":"cnc","connectionRef":"<uuid>","selectedTable":"etchers_data","timestampColumn":"ts","selectedColumns":["gas_ar_flow"],"rule":[]}'
 ```
 
 Add/remove columns:
@@ -169,6 +312,11 @@ Scheduler env options:
 - `MCP_POSTGRES_HTTP` / `MCP_MYSQL_HTTP` (HTTP endpoints when no config file is used)
 - `ALLOWLIST_TABLES` (comma-separated table allowlist)
 
+Rule-service env options:
+
+- `DB_CONNECTOR_URL` (db-connector base URL for metadata)
+- `SCHEDULER_ADMIN_URL` (scheduler admin URL for preview/baseline)
+
 MCP server env options:
 
 - `MCP_DB_TYPE` (`postgres` or `mysql`)
@@ -183,4 +331,5 @@ make migrate
 make run-rule
 make run-scheduler
 make test
+go vet ./...
 ```

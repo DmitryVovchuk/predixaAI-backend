@@ -78,6 +78,7 @@ func setupMachineUnitFixture(t *testing.T) machineUnitTestFixture {
 		unit_name text NOT NULL,
 		connection_ref uuid NOT NULL REFERENCES db_connections(id),
 		selected_table text NOT NULL,
+		timestamp_column text NOT NULL DEFAULT '',
 		selected_columns jsonb NOT NULL DEFAULT '[]'::jsonb,
 		live_parameters jsonb NOT NULL DEFAULT '[]'::jsonb,
 		rule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -86,6 +87,20 @@ func setupMachineUnitFixture(t *testing.T) machineUnitTestFixture {
 	)`)
 	if err != nil {
 		t.Fatalf("failed to ensure machine_units: %v", err)
+	}
+	_, err = repo.Store.Pool.Exec(context.Background(), `CREATE TABLE IF NOT EXISTS ui_rules (
+		id uuid PRIMARY KEY,
+		unit_id text NOT NULL,
+		name text NOT NULL,
+		rule_type text NOT NULL,
+		parameter_id text NOT NULL,
+		config jsonb NOT NULL DEFAULT '{}'::jsonb,
+		enabled boolean NOT NULL DEFAULT true,
+		created_at timestamptz NOT NULL DEFAULT now(),
+		updated_at timestamptz NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		t.Fatalf("failed to ensure ui_rules: %v", err)
 	}
 
 	connectionRef, err := repo.CreateConnection(context.Background(), storage.DBConnection{
@@ -119,6 +134,7 @@ func setupMachineUnitFixture(t *testing.T) machineUnitTestFixture {
 		UnitName:        "unit",
 		ConnectionRef:   connectionRef,
 		SelectedTable:   "etchers_data",
+		TimestampColumn: "ts",
 		SelectedColumns: []string{"gas_ar_flow"},
 		LiveParameters:  json.RawMessage("[]"),
 		RuleIDs:         []string{ruleID},
@@ -273,6 +289,7 @@ func TestMachineUnitCreateRuleObject(t *testing.T) {
 		"unitName":        "cnc",
 		"connectionRef":   fixture.connectionRef,
 		"selectedTable":   "etchers_data",
+		"timestampColumn": "ts",
 		"selectedColumns": []string{"gas_ar_flow"},
 		"rule":            map[string]any{},
 	}
@@ -295,6 +312,45 @@ func TestMachineUnitCreateRuleObject(t *testing.T) {
 	}
 	if len(parsed.Unit.RuleIDs) != 0 {
 		t.Fatalf("expected rule list to be empty")
+	}
+}
+
+func TestMachineUnitCreateWithExistingIDUpdates(t *testing.T) {
+	fixture := setupMachineUnitFixture(t)
+	defer fixture.cleanup()
+	router := buildTestRouter(fixture.repo)
+
+	payload := map[string]any{
+		"unitId":          fixture.unitID,
+		"unitName":        "cnc-updated",
+		"connectionRef":   fixture.connectionRef,
+		"selectedTable":   "etchers_data",
+		"timestampColumn": "ts",
+		"selectedColumns": []string{"gas_ar_flow"},
+		"rule":            []string{},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/machine-units", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var parsed struct {
+		Ok   bool                `json:"ok"`
+		Unit machineUnitResponse `json:"unit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if parsed.Unit.UnitID != fixture.unitID {
+		t.Fatalf("expected same unitId")
+	}
+	if parsed.Unit.UnitName != "cnc-updated" {
+		t.Fatalf("expected updated unitName")
 	}
 }
 

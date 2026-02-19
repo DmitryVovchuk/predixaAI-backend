@@ -28,6 +28,7 @@ type machineUnitRequest struct {
 	UnitName        string          `json:"unitName"`
 	ConnectionRef   string          `json:"connectionRef"`
 	SelectedTable   string          `json:"selectedTable"`
+	TimestampColumn string          `json:"timestampColumn"`
 	SelectedColumns []string        `json:"selectedColumns"`
 	LiveParameters  json.RawMessage `json:"liveParameters"`
 	RuleIDs         ruleIDList      `json:"rule"`
@@ -39,6 +40,7 @@ type machineUnitResponse struct {
 	UnitName        string          `json:"unitName"`
 	ConnectionRef   string          `json:"connectionRef"`
 	SelectedTable   string          `json:"selectedTable"`
+	TimestampColumn string          `json:"timestampColumn"`
 	SelectedColumns []string        `json:"selectedColumns"`
 	LiveParameters  json.RawMessage `json:"liveParameters"`
 	RuleIDs         []string        `json:"rule"`
@@ -120,13 +122,28 @@ func (h *Handler) handleMachineUnitCreate(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	if strings.TrimSpace(req.UnitID) != "" {
-		writeValidationError(w, "UNIT_ID_NOT_ALLOWED", "unitId is server-generated", []rules.ErrorDetail{{Field: "unitId", Problem: "not_allowed", Hint: "Remove unitId from request"}})
-		return
-	}
 	unit, details := h.validateMachineUnitRequest(r.Context(), req)
 	if len(details) > 0 {
 		writeValidationError(w, "VALIDATION_ERROR", "invalid machine unit request", details)
+		return
+	}
+	if strings.TrimSpace(req.UnitID) != "" {
+		_, err := h.Repo.GetMachineUnit(r.Context(), req.UnitID)
+		if err != nil {
+			if err == storage.ErrNotFound {
+				writeValidationError(w, "UNIT_ID_NOT_ALLOWED", "unitId is server-generated", []rules.ErrorDetail{{Field: "unitId", Problem: "not_allowed", Hint: "Remove unitId or use an existing unitId"}})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "failed to fetch machine unit"})
+			return
+		}
+		unit.UnitID = req.UnitID
+		updated, err := h.Repo.UpdateMachineUnit(r.Context(), unit)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "failed to update machine unit"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unit": buildMachineUnitResponse(updated)})
 		return
 	}
 	unit.UnitID = "machine-" + uuid.NewString()
@@ -454,6 +471,10 @@ func (h *Handler) validateMachineUnitRequest(ctx context.Context, req machineUni
 	} else if !identifierRe.MatchString(selectedTable) {
 		details = append(details, rules.ErrorDetail{Field: "selectedTable", Problem: "invalid", Hint: "Use a valid table identifier"})
 	}
+	timestampColumn := strings.TrimSpace(req.TimestampColumn)
+	if timestampColumn != "" && !identifierRe.MatchString(timestampColumn) {
+		details = append(details, rules.ErrorDetail{Field: "timestampColumn", Problem: "invalid", Hint: "Use a valid column identifier"})
+	}
 	columns := dedupePreserveOrder(req.SelectedColumns)
 	if len(columns) > maxSelectedColumns {
 		details = append(details, rules.ErrorDetail{Field: "selectedColumns", Problem: "max", Hint: "Maximum 200 columns"})
@@ -490,6 +511,7 @@ func (h *Handler) validateMachineUnitRequest(ctx context.Context, req machineUni
 		UnitName:        unitName,
 		ConnectionRef:   connectionRef,
 		SelectedTable:   selectedTable,
+		TimestampColumn: timestampColumn,
 		SelectedColumns: columns,
 		LiveParameters:  liveParams,
 		RuleIDs:         ruleIDs,
@@ -586,6 +608,7 @@ func buildMachineUnitResponse(unit storage.MachineUnit) machineUnitResponse {
 		UnitName:        unit.UnitName,
 		ConnectionRef:   unit.ConnectionRef,
 		SelectedTable:   unit.SelectedTable,
+		TimestampColumn: unit.TimestampColumn,
 		SelectedColumns: unit.SelectedColumns,
 		LiveParameters:  live,
 		RuleIDs:         unit.RuleIDs,

@@ -100,8 +100,112 @@ func validateDetector(detector DetectorSpec, pollInterval int, index int) *Error
 		if detector.MissingData.MaxGapSeconds < pollInterval {
 			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.missingData.maxGapSeconds", index), Problem: "too small", Hint: "maxGapSeconds >= pollIntervalSeconds"}
 		}
+	case "spec_limit":
+		if detector.SpecLimit == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.specLimit", index), Problem: "missing", Hint: "Provide specLimit settings"}
+		}
+		mode := detector.SpecLimit.Mode
+		if mode == "" {
+			mode = "spec"
+		}
+		if mode != "spec" && mode != "control" && mode != "both" {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.specLimit.mode", index), Problem: "invalid", Hint: "Use spec, control, or both"}
+		}
+		if (mode == "spec" || mode == "both") && (detector.SpecLimit.SpecLimits == nil || (detector.SpecLimit.SpecLimits.USL == nil && detector.SpecLimit.SpecLimits.LSL == nil)) {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.specLimit.specLimits", index), Problem: "missing", Hint: "Provide USL/LSL"}
+		}
+		if (mode == "control" || mode == "both") && (detector.SpecLimit.ControlLimits == nil || (detector.SpecLimit.ControlLimits.UCL == nil && detector.SpecLimit.ControlLimits.LCL == nil)) {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.specLimit.controlLimits", index), Problem: "missing", Hint: "Provide UCL/LCL"}
+		}
+	case "shewhart":
+		if detector.Shewhart == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.shewhart", index), Problem: "missing", Hint: "Provide shewhart settings"}
+		}
+		if err := validateBaseline(detector.Shewhart.Baseline, fmt.Sprintf("parameters[%d].detector.shewhart.baseline", index)); err != nil {
+			return err
+		}
+		if detector.Shewhart.SigmaMultiplier != 0 && (detector.Shewhart.SigmaMultiplier < 2 || detector.Shewhart.SigmaMultiplier > 3) {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.shewhart.sigmaMultiplier", index), Problem: "invalid", Hint: "Use 2 or 3"}
+		}
+		if detector.Shewhart.MinBaselineN < 0 {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.shewhart.minBaselineN", index), Problem: "invalid", Hint: "minBaselineN must be >= 0"}
+		}
+	case "range_chart":
+		if detector.RangeChart == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.rangeChart", index), Problem: "missing", Hint: "Provide rangeChart settings"}
+		}
+		if !isSupportedRangeChartSize(detector.RangeChart.SubgroupSize) {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.rangeChart.subgroupSize", index), Problem: "invalid", Hint: "Supported subgroupSize: 2-10"}
+		}
+		if err := validateBaseline(detector.RangeChart.Baseline, fmt.Sprintf("parameters[%d].detector.rangeChart.baseline", index)); err != nil {
+			return err
+		}
+		mode := detector.RangeChart.Subgrouping.Mode
+		if mode == "" {
+			mode = "consecutive"
+		}
+		if mode != "consecutive" && mode != "column" {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.rangeChart.subgrouping.mode", index), Problem: "invalid", Hint: "Use consecutive or column"}
+		}
+		if mode == "column" && detector.RangeChart.Subgrouping.Column == "" {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.rangeChart.subgrouping.column", index), Problem: "missing", Hint: "Provide column name"}
+		}
+	case "trend":
+		if detector.Trend == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.trend", index), Problem: "missing", Hint: "Provide trend settings"}
+		}
+		if detector.Trend.WindowSize < 2 {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.trend.windowSize", index), Problem: "invalid", Hint: "windowSize must be >= 2"}
+		}
+		if detector.Trend.Epsilon < 0 {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.trend.epsilon", index), Problem: "invalid", Hint: "epsilon must be >= 0"}
+		}
+	case "tpa":
+		if detector.TPA == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.tpa", index), Problem: "missing", Hint: "Provide tpa settings"}
+		}
+		if detector.TPA.WindowN < 3 {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.tpa.windowN", index), Problem: "invalid", Hint: "windowN must be >= 3"}
+		}
+		basis := detector.TPA.RegressionTimeBasis
+		if basis != "" && basis != "index" && basis != "timestamp" {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.tpa.regressionTimeBasis", index), Problem: "invalid", Hint: "Use index or timestamp"}
+		}
+		if detector.TPA.RequireSpecLimits && detector.TPA.SpecLimits == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.tpa.specLimits", index), Problem: "missing", Hint: "Provide spec limits"}
+		}
+		if detector.TPA.SlopeThreshold == nil && detector.TPA.TimeToSpecThreshold == nil {
+			return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.tpa", index), Problem: "invalid", Hint: "Provide slopeThreshold or timeToSpecThreshold"}
+		}
 	default:
-		return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.type", index), Problem: "unsupported", Hint: "Use threshold, robust_zscore, or missing_data"}
+		return &ErrorDetail{Field: fmt.Sprintf("parameters[%d].detector.type", index), Problem: "unsupported", Hint: "Use threshold, robust_zscore, missing_data, spec_limit, shewhart, range_chart, trend, or tpa"}
 	}
 	return nil
+}
+
+func validateBaseline(baseline BaselineSpec, field string) *ErrorDetail {
+	if baseline.LastN != nil && baseline.TimeRange != nil {
+		return &ErrorDetail{Field: field, Problem: "invalid", Hint: "Use lastN or timeRange"}
+	}
+	if baseline.LastN == nil && baseline.TimeRange == nil {
+		return &ErrorDetail{Field: field, Problem: "missing", Hint: "Provide lastN or timeRange"}
+	}
+	if baseline.LastN != nil && *baseline.LastN <= 0 {
+		return &ErrorDetail{Field: field + ".lastN", Problem: "invalid", Hint: "lastN must be > 0"}
+	}
+	if baseline.TimeRange != nil {
+		if baseline.TimeRange.Start == "" || baseline.TimeRange.End == "" {
+			return &ErrorDetail{Field: field + ".timeRange", Problem: "invalid", Hint: "Provide start and end"}
+		}
+	}
+	return nil
+}
+
+func isSupportedRangeChartSize(size int) bool {
+	switch size {
+	case 2, 3, 4, 5, 6, 7, 8, 9, 10:
+		return true
+	default:
+		return false
+	}
 }

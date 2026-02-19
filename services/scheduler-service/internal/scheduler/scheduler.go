@@ -160,6 +160,21 @@ func (r *Registry) execute(run JobRun) {
 		for k, v := range result.Metadata {
 			metadataMap[k] = v
 		}
+		if result.WindowStart != nil {
+			metadataMap["windowStart"] = result.WindowStart.Format(time.RFC3339)
+		}
+		if result.WindowEnd != nil {
+			metadataMap["windowEnd"] = result.WindowEnd.Format(time.RFC3339)
+		}
+		if result.BaselineStart != nil {
+			metadataMap["baselineStart"] = result.BaselineStart.Format(time.RFC3339)
+		}
+		if result.BaselineEnd != nil {
+			metadataMap["baselineEnd"] = result.BaselineEnd.Format(time.RFC3339)
+		}
+		if len(result.Violations) > 0 {
+			metadataMap["violations"] = result.Violations
+		}
 		metadataMap["explain"] = buildExplain(result, param)
 		metadata, _ := json.Marshal(metadataMap)
 		_ = r.repo.CreateAlert(ctx, storage.AlertRecord{
@@ -256,6 +271,126 @@ func (r *Registry) evaluateParameter(ctx context.Context, spec RuleSpec, param P
 		}
 		result := EvaluateRobustZ(samples, latest, param.Detector.RobustZ.ZWarn, param.Detector.RobustZ.ZCrit)
 		return result, nil
+	case "spec_limit":
+		if param.Detector.SpecLimit == nil {
+			return DetectorResult{}, errors.New("spec_limit detector missing config")
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, r.limits.MaxQueryDuration)
+		defer cancel()
+		resp, err := adapter.QueryLatestValue(queryCtx, mcp.LatestValueRequest{
+			ConnectionRef:   spec.ConnectionRef,
+			Table:           spec.Source.Table,
+			ValueColumn:     param.ValueColumn,
+			TimestampColumn: spec.Source.TimestampColumn,
+			Where:           toWhere(spec.Source.Where),
+		})
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		floatVal, err := toFloat(resp.Value)
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		sampleTS := time.Now().UTC()
+		if resp.TS != "" {
+			if parsed, parseErr := parseTimeValue(resp.TS); parseErr == nil {
+				sampleTS = parsed
+			}
+		}
+		return EvaluateSpecLimit(Sample{TS: sampleTS, Value: floatVal}, *param.Detector.SpecLimit), nil
+	case "shewhart":
+		if param.Detector.Shewhart == nil {
+			return DetectorResult{}, errors.New("shewhart detector missing config")
+		}
+		now := time.Now().UTC()
+		since, start, end, limit, err := buildBaselineWindow(now, param.Detector.Shewhart.Baseline, r.limits.MaxSampleRows)
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, r.limits.MaxQueryDuration)
+		defer cancel()
+		samples, err := fetchSamples(queryCtx, adapter, spec, param, nil, since, limit, "")
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		samples = filterSamplesByRange(samples, start, end)
+		sigma := param.Detector.Shewhart.SigmaMultiplier
+		if sigma == 0 {
+			sigma = 3
+		}
+		result := EvaluateShewhart(samples, *param.Detector.Shewhart, sigma)
+		applyWindowAndBaseline(&result, samples, start, end, true)
+		return result, nil
+	case "range_chart":
+		if param.Detector.RangeChart == nil {
+			return DetectorResult{}, errors.New("range_chart detector missing config")
+		}
+		now := time.Now().UTC()
+		since, start, end, limit, err := buildBaselineWindow(now, param.Detector.RangeChart.Baseline, r.limits.MaxSampleRows)
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		mode := param.Detector.RangeChart.Subgrouping.Mode
+		subgroupColumn := ""
+		if mode == "column" {
+			subgroupColumn = param.Detector.RangeChart.Subgrouping.Column
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, r.limits.MaxQueryDuration)
+		defer cancel()
+		samples, err := fetchSamples(queryCtx, adapter, spec, param, nil, since, limit, subgroupColumn)
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		samples = filterSamplesByRange(samples, start, end)
+		groups := [][]Sample{}
+		size := param.Detector.RangeChart.SubgroupSize
+		if subgroupColumn != "" {
+			groups = groupBySubgroup(samples, size)
+		} else {
+			groups = groupConsecutive(samples, size)
+		}
+		result := EvaluateRangeChart(groups, *param.Detector.RangeChart)
+		applyWindowAndBaseline(&result, samples, start, end, true)
+		return result, nil
+	case "trend":
+		if param.Detector.Trend == nil {
+			return DetectorResult{}, errors.New("trend detector missing config")
+		}
+		window := param.Detector.Trend.WindowSize
+		if window == 0 {
+			window = 6
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, r.limits.MaxQueryDuration)
+		defer cancel()
+		samples, err := fetchSamples(queryCtx, adapter, spec, param, nil, time.Now().UTC().Add(-time.Hour*24*365), clampLimit(window, r.limits.MaxSampleRows), "")
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		if param.Detector.Trend.RequireConsecutiveTimestamps && !hasConsecutiveTimestamps(samples) {
+			result := insufficientData("non-consecutive timestamps")
+			applyWindowAndBaseline(&result, samples, nil, nil, false)
+			return result, nil
+		}
+		result := EvaluateTrend6(samples, *param.Detector.Trend)
+		applyWindowAndBaseline(&result, samples, nil, nil, false)
+		return result, nil
+	case "tpa":
+		if param.Detector.TPA == nil {
+			return DetectorResult{}, errors.New("tpa detector missing config")
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, r.limits.MaxQueryDuration)
+		defer cancel()
+		limit := param.Detector.TPA.WindowN
+		if limit == 0 {
+			limit = 3
+		}
+		samples, err := fetchSamples(queryCtx, adapter, spec, param, nil, time.Now().UTC().Add(-time.Hour*24*365), clampLimit(limit, r.limits.MaxSampleRows), "")
+		if err != nil {
+			return DetectorResult{}, err
+		}
+		result := EvaluateTPA(samples, *param.Detector.TPA)
+		applyWindowAndBaseline(&result, samples, nil, nil, false)
+		return result, nil
 	default:
 		if param.Detector.Threshold == nil {
 			return DetectorResult{}, errors.New("threshold detector missing config")
@@ -349,7 +484,35 @@ func buildExplain(result DetectorResult, param ParameterSpec) string {
 		return fmt.Sprintf("missing_data max_gap=%ds", param.Detector.MissingData.MaxGapSeconds)
 	case "threshold":
 		return result.LimitExpr
+	case "spec_limit", "shewhart", "range_chart", "trend", "tpa":
+		return result.LimitExpr
 	default:
 		return "detector"
+	}
+}
+
+func applyWindowAndBaseline(result *DetectorResult, samples []Sample, baselineStart, baselineEnd *time.Time, baselineUsed bool) {
+	if result == nil || len(samples) == 0 {
+		return
+	}
+	first := samples[0].TS
+	last := samples[len(samples)-1].TS
+	if !first.IsZero() {
+		result.WindowStart = &first
+	}
+	if !last.IsZero() {
+		result.WindowEnd = &last
+	}
+	if baselineUsed {
+		if baselineStart != nil {
+			result.BaselineStart = baselineStart
+		}
+		if baselineEnd != nil {
+			result.BaselineEnd = baselineEnd
+		}
+		if baselineStart == nil && baselineEnd == nil {
+			result.BaselineStart = result.WindowStart
+			result.BaselineEnd = result.WindowEnd
+		}
 	}
 }

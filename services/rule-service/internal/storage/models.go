@@ -54,6 +54,7 @@ type MachineUnit struct {
 	UnitName        string
 	ConnectionRef   string
 	SelectedTable   string
+	TimestampColumn string
 	SelectedColumns []string
 	LiveParameters  json.RawMessage
 	RuleIDs         []string
@@ -61,4 +62,16 @@ type MachineUnit struct {
 	PosY            float64
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+type StepperRule struct {
+	ID          string
+	UnitID      string
+	Name        string
+	RuleType    string
+	ParameterID string
+	Config      json.RawMessage
+	Enabled     bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

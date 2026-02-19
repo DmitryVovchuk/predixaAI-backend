@@ -9,6 +9,7 @@ services:
       - "5432:5432"
     networks:
       - control_net
+      - data_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -43,6 +44,8 @@ services:
       - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
       - RULE_POLL_MIN=5
       - RULE_POLL_MAX=3600
+      - DB_CONNECTOR_URL=http://db-connector:8080
+      - SCHEDULER_ADMIN_URL=http://scheduler-service:8091
     ports:
       - "8090:8090"
     networks:
@@ -61,7 +64,7 @@ services:
       - MCP_CONFIG_PATH=/app/mcp.yaml
       - MCP_POSTGRES_HTTP=http://postgres-mcp:9001/rpc
       - MCP_MYSQL_HTTP=http://mysql-mcp:9002/rpc
-      - ALLOWLIST_TABLES=telemetry,metrics
+      - ALLOWLIST_TABLES=telemetry,metrics,etchers_data
       - WORKER_COUNT=4
       - JOB_TIMEOUT_SECONDS=10
       - ADMIN_PORT=8091
@@ -100,7 +103,7 @@ services:
     environment:
       - PORT=9002
       - MCP_DB_TYPE=mysql
-      - DATABASE_URL=mysql://root:mysql@mysql-local:3306/app
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/rules?sslmode=disable
       - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
     ports:
       - "9002:9002"

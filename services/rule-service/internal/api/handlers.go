@@ -23,6 +23,8 @@ type Handler struct {
 	MinPoll   int
 	MaxPoll   int
 	Timeout   time.Duration
+	DBConnectorURL string
+	SchedulerURL   string
 }
 
 type errorResponse struct {
@@ -104,6 +106,7 @@ func buildDraft(req rulePromptRequest) *rules.RuleDraft {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/connections", h.handleConnections)
 	r.Post("/rules/validate", h.handleRulesValidate)
+	h.RegisterStepperRoutes(r)
 	h.RegisterMachineUnitRoutes(r)
 	r.Route("/rules", func(r chi.Router) {
 		r.Post("/", h.handleRulesCreate)
